@@ -47,6 +47,15 @@ struct SettingsView: View {
                     Text("Messages or merchants containing the text get the category. Your rules always override the built-in defaults. Newest rule wins.")
                 }
 
+                // MARK: Categories
+                Section("Categories") {
+                    NavigationLink {
+                        CategoryManagerView()
+                    } label: {
+                        Label("Manage Categories", systemImage: "tag")
+                    }
+                }
+
                 // MARK: Data
                 Section("Data") {
                     NavigationLink {
@@ -111,6 +120,7 @@ struct AddRuleView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Query private var rules: [CategoryRule]
+    @Query(sort: \ExpenseCategory.name) private var customCategories: [ExpenseCategory]
 
     @State private var matchText = ""
     @State private var category = DefaultData.categories.first ?? "Uncategorized"
@@ -118,9 +128,7 @@ struct AddRuleView: View {
     @State private var applyToExisting = true
 
     private var allCategories: [String] {
-        var set = Set(DefaultData.categories)
-        rules.forEach { set.insert($0.category) }
-        return set.sorted()
+        DefaultData.allCategories(custom: customCategories, rules: rules)
     }
 
     var body: some View {
@@ -177,6 +185,87 @@ struct AddRuleView: View {
 
         try? context.save()
         dismiss()
+    }
+}
+
+// MARK: - Category manager
+
+struct CategoryManagerView: View {
+    @Environment(\.modelContext) private var context
+    @Query(sort: \ExpenseCategory.createdAt, order: .reverse)
+    private var customCategories: [ExpenseCategory]
+    @Query private var rules: [CategoryRule]
+
+    @State private var newName = ""
+
+    private var trimmedName: String {
+        newName.trimmingCharacters(in: .whitespaces)
+    }
+
+    private var alreadyExists: Bool {
+        DefaultData.allCategories(custom: customCategories, rules: rules)
+            .contains { $0.caseInsensitiveCompare(trimmedName) == .orderedSame }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                HStack {
+                    TextField("New category name", text: $newName)
+                        .autocorrectionDisabled()
+                        .onSubmit(add)
+                    Button("Add", action: add)
+                        .disabled(trimmedName.isEmpty || alreadyExists)
+                }
+            } footer: {
+                if !trimmedName.isEmpty && alreadyExists {
+                    Text("That category already exists.")
+                } else {
+                    Text("New categories appear everywhere you pick a category.")
+                }
+            }
+
+            Section("Your categories") {
+                if customCategories.isEmpty {
+                    Text("No custom categories yet.")
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                }
+                ForEach(customCategories) { c in
+                    Text(c.name)
+                }
+                .onDelete(perform: deleteCustom)
+            }
+
+            Section {
+                ForEach(DefaultData.categories, id: \.self) { name in
+                    Text(name).foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Built-in")
+            } footer: {
+                Text("Built-in categories can't be removed.")
+            }
+        }
+        .navigationTitle("Categories")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !customCategories.isEmpty {
+                ToolbarItem(placement: .primaryAction) { EditButton() }
+            }
+        }
+    }
+
+    private func add() {
+        guard !trimmedName.isEmpty, !alreadyExists else { return }
+        context.insert(ExpenseCategory(name: trimmedName))
+        try? context.save()
+        newName = ""
+    }
+
+    private func deleteCustom(at offsets: IndexSet) {
+        for i in offsets { context.delete(customCategories[i]) }
+        try? context.save()
     }
 }
 

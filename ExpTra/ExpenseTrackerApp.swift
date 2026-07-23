@@ -18,7 +18,8 @@ enum Store {
         let schema = Schema([
             Transaction.self,
             MessageTemplate.self,
-            CategoryRule.self
+            CategoryRule.self,
+            ExpenseCategory.self
         ])
         let config = ModelConfiguration(schema: schema)
         do {

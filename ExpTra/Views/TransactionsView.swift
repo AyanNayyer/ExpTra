@@ -104,15 +104,14 @@ struct TransactionEditView: View {
     @Bindable var tx: Transaction
 
     @Query private var rules: [CategoryRule]
+    @Query(sort: \ExpenseCategory.name) private var customCategories: [ExpenseCategory]
 
     @State private var createRule = false
     @State private var applyToExisting = true
     @State private var customCategory = ""
 
     private var allCategories: [String] {
-        var set = Set(DefaultData.categories)
-        rules.forEach { set.insert($0.category) }
-        return set.sorted()
+        DefaultData.allCategories(custom: customCategories, rules: rules)
     }
 
     var body: some View {
@@ -187,11 +186,18 @@ struct ManualAddView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
 
+    @Query private var rules: [CategoryRule]
+    @Query(sort: \ExpenseCategory.name) private var customCategories: [ExpenseCategory]
+
     @State private var amountText = ""
     @State private var merchant = ""
     @State private var category = "Uncategorized"
     @State private var type = "debit"
     @State private var date = Date()
+
+    private var allCategories: [String] {
+        DefaultData.allCategories(custom: customCategories, rules: rules)
+    }
 
     var body: some View {
         NavigationStack {
@@ -200,7 +206,7 @@ struct ManualAddView: View {
                     .keyboardType(.decimalPad)
                 TextField("Merchant / description", text: $merchant)
                 Picker("Category", selection: $category) {
-                    ForEach(DefaultData.categories, id: \.self) { Text($0).tag($0) }
+                    ForEach(allCategories, id: \.self) { Text($0).tag($0) }
                 }
                 Picker("Type", selection: $type) {
                     Text("Debit").tag("debit")
