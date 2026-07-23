@@ -14,6 +14,7 @@ struct DashboardView: View {
     private var transactions: [Transaction]
 
     @State private var monthOffset = 0   // 0 = current month, -1 = last month…
+    @State private var selectedAngle: Double?   // raw angular value from a tap on the donut
 
     private var calendar: Calendar { .current }
 
@@ -41,9 +42,20 @@ struct DashboardView: View {
     }
 
     private struct CategoryTotal: Identifiable {
-        let id = UUID()
+        var id: String { category }   // stable across recomputes so selection/animation work
         let category: String
         let total: Double
+    }
+
+    /// Maps the tapped angular value onto the category whose sector was hit.
+    private var selectedCategory: CategoryTotal? {
+        guard let selectedAngle else { return nil }
+        var cumulative = 0.0
+        for item in categoryTotals {
+            cumulative += item.total
+            if selectedAngle < cumulative { return item }
+        }
+        return nil
     }
 
     private var categoryTotals: [CategoryTotal] {
@@ -121,13 +133,53 @@ struct DashboardView: View {
             SectorMark(
                 angle: .value("Amount", item.total),
                 innerRadius: .ratio(0.62),
+                outerRadius: .ratio(selectedCategory?.id == item.id ? 1.0 : 0.9),
                 angularInset: 1.5
             )
             .cornerRadius(4)
             .foregroundStyle(by: .value("Category", item.category))
+            .opacity(selectedCategory == nil || selectedCategory?.id == item.id ? 1 : 0.35)
         }
+        .chartAngleSelection(value: $selectedAngle)
+        .chartBackground { _ in donutCenter }
         .frame(height: 240)
         .chartLegend(position: .bottom, alignment: .center, spacing: 8)
+        .animation(.easeInOut(duration: 0.25), value: selectedCategory?.id)
+    }
+
+    /// Center readout: tapped category + its amount and share, or the month total.
+    private var donutCenter: some View {
+        VStack(spacing: 3) {
+            if let sel = selectedCategory {
+                Text(sel.category)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Text(sel.total,
+                     format: .currency(code: "INR").precision(.fractionLength(0)))
+                    .font(.title3.bold())
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+                if totalSpent > 0 {
+                    Text("\(Int((sel.total / totalSpent * 100).rounded()))%")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Total")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(totalSpent,
+                     format: .currency(code: "INR").precision(.fractionLength(0)))
+                    .font(.title3.bold())
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+                Text("Tap a slice")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: 120)
     }
 
     private var categoryList: some View {

@@ -15,8 +15,10 @@ struct TemplatesView: View {
     @Query(sort: \MessageTemplate.sortOrder)
     private var templates: [MessageTemplate]
 
+    @State private var path: [MessageTemplate] = []
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 Section {
                     ForEach(templates) { t in
@@ -71,6 +73,8 @@ struct TemplatesView: View {
         )
         context.insert(t)
         try? context.save()
+        // Navigate straight into the editor so it's obvious a template was added.
+        path.append(t)
     }
 
     private func delete(at offsets: IndexSet) {

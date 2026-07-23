@@ -95,6 +95,22 @@ final class CategoryRule {
     }
 }
 
+// MARK: - ExpenseCategory
+//
+// A user-created spending category. These are merged with the built-in
+// DefaultData.categories everywhere a category can be picked.
+
+@Model
+final class ExpenseCategory {
+    var name: String
+    var createdAt: Date
+
+    init(name: String, createdAt: Date = .now) {
+        self.name = name
+        self.createdAt = createdAt
+    }
+}
+
 // MARK: - Defaults
 
 enum DefaultData {
@@ -105,6 +121,17 @@ enum DefaultData {
         "Investments", "Rent & Home", "Entertainment", "Travel",
         "Education", "Income", "Transfers", "Uncategorized"
     ]
+
+    /// The full, de-duplicated, sorted set of categories a user can choose from:
+    /// the built-in defaults plus any custom categories and categories referenced
+    /// by existing rules.
+    static func allCategories(custom: [ExpenseCategory],
+                              rules: [CategoryRule]) -> [String] {
+        var set = Set(categories)
+        custom.forEach { set.insert($0.name) }
+        rules.forEach { set.insert($0.category) }
+        return set.sorted()
+    }
 
     /// Built-in keyword → category fallbacks (user CategoryRules override these).
     static let defaultKeywordRules: [(keywords: [String], category: String)] = [
