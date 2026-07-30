@@ -9,12 +9,19 @@ import SwiftUI
 import SwiftData
 import Charts
 
+enum DashboardMode: String, CaseIterable, Identifiable {
+    case spending = "Spending"
+    case income = "Income"
+    var id: String { rawValue }
+}
+
 struct DashboardView: View {
     @Query(sort: \Transaction.date, order: .reverse)
     private var transactions: [Transaction]
 
     @State private var monthOffset = 0   // 0 = current month, -1 = last month…
     @State private var selectedAngle: Double?   // raw angular value from a tap on the donut
+    @State private var mode: DashboardMode = .spending
 
     private var calendar: Calendar { .current }
 
@@ -28,18 +35,18 @@ struct DashboardView: View {
         }
     }
 
-    private var debits: [Transaction] {
-        monthTransactions.filter { $0.type == "debit" }
-    }
-
     private var totalSpent: Double {
-        debits.reduce(0) { $0 + $1.amountDouble }
+        monthTransactions.filter { $0.type == "debit" }
+            .reduce(0) { $0 + $1.amountDouble }
     }
 
     private var totalIncome: Double {
         monthTransactions.filter { $0.type == "credit" }
             .reduce(0) { $0 + $1.amountDouble }
     }
+
+    /// Debits minus credits for the whole month — the final net figure.
+    private var netAmount: Double { totalSpent - totalIncome }
 
     private struct CategoryTotal: Identifiable {
         var id: String { category }   // stable across recomputes so selection/animation work
@@ -58,11 +65,34 @@ struct DashboardView: View {
         return nil
     }
 
+    /// Per-category debit and credit sums for the month.
+    private var categorySums: [String: (debit: Double, credit: Double)] {
+        var dict: [String: (debit: Double, credit: Double)] = [:]
+        for t in monthTransactions {
+            var entry = dict[t.category] ?? (0, 0)
+            if t.type == "debit" { entry.debit += t.amountDouble }
+            else { entry.credit += t.amountDouble }
+            dict[t.category] = entry
+        }
+        return dict
+    }
+
+    /// Net totals per category for the active mode. In Spending, credits (refunds,
+    /// income tagged to the same category) are deducted from debits and only
+    /// net-positive categories show; Income is the mirror image.
     private var categoryTotals: [CategoryTotal] {
-        var dict: [String: Double] = [:]
-        for t in debits { dict[t.category, default: 0] += t.amountDouble }
-        return dict.map { CategoryTotal(category: $0.key, total: $0.value) }
-            .sorted { $0.total > $1.total }
+        categorySums.compactMap { category, sums in
+            let net = mode == .spending
+                ? sums.debit - sums.credit
+                : sums.credit - sums.debit
+            return net > 0 ? CategoryTotal(category: category, total: net) : nil
+        }
+        .sorted { $0.total > $1.total }
+    }
+
+    /// Sum of the visible sectors — the net spent (or net received) this month.
+    private var activeTotal: Double {
+        categoryTotals.reduce(0) { $0 + $1.total }
     }
 
     var body: some View {
@@ -71,6 +101,7 @@ struct DashboardView: View {
                 VStack(spacing: 20) {
                     monthPicker
                     summaryCards
+                    modePicker
                     if categoryTotals.isEmpty {
                         emptyState
                     } else {
@@ -80,6 +111,7 @@ struct DashboardView: View {
                 }
                 .padding()
             }
+            .onChange(of: monthOffset) { _, _ in selectedAngle = nil }
             .navigationTitle("Dashboard")
         }
     }
@@ -109,7 +141,20 @@ struct DashboardView: View {
                         icon: "arrow.up.circle.fill")
             summaryCard(title: "Received", value: totalIncome, color: .green,
                         icon: "arrow.down.circle.fill")
+            summaryCard(title: "Net", value: netAmount,
+                        color: netAmount >= 0 ? .primary : .green,
+                        icon: "equal.circle.fill")
         }
+    }
+
+    private var modePicker: some View {
+        Picker("View", selection: $mode) {
+            ForEach(DashboardMode.allCases) { m in
+                Text(m.rawValue).tag(m)
+            }
+        }
+        .pickerStyle(.segmented)
+        .onChange(of: mode) { _, _ in selectedAngle = nil }
     }
 
     private func summaryCard(title: String, value: Double,
@@ -147,7 +192,7 @@ struct DashboardView: View {
         .animation(.easeInOut(duration: 0.25), value: selectedCategory?.id)
     }
 
-    /// Center readout: tapped category + its amount and share, or the month total.
+    /// Center readout: tapped category + its amount and share, or the net total.
     private var donutCenter: some View {
         VStack(spacing: 3) {
             if let sel = selectedCategory {
@@ -160,16 +205,17 @@ struct DashboardView: View {
                     .font(.title3.bold())
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
-                if totalSpent > 0 {
-                    Text("\(Int((sel.total / totalSpent * 100).rounded()))%")
+                if activeTotal > 0 {
+                    Text("\(Int((sel.total / activeTotal * 100).rounded()))%")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             } else {
-                Text("Total")
+                Text(mode == .spending ? "Net spent" : "Net received")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(totalSpent,
+                    .multilineTextAlignment(.center)
+                Text(activeTotal,
                      format: .currency(code: "INR").precision(.fractionLength(0)))
                     .font(.title3.bold())
                     .minimumScaleFactor(0.6)
@@ -201,9 +247,11 @@ struct DashboardView: View {
 
     private var emptyState: some View {
         ContentUnavailableView(
-            "No transactions this month",
+            mode == .spending ? "No net spending this month" : "No income this month",
             systemImage: "tray",
-            description: Text("Auto-captured expenses will appear here, or add them via Import in Settings.")
+            description: Text(mode == .spending
+                ? "Auto-captured expenses will appear here, or add them via Import in Settings."
+                : "Credits like salary or refunds will appear here.")
         )
         .padding(.top, 40)
     }

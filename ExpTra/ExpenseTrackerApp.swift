@@ -19,7 +19,8 @@ enum Store {
             Transaction.self,
             MessageTemplate.self,
             CategoryRule.self,
-            ExpenseCategory.self
+            ExpenseCategory.self,
+            PendingMessage.self
         ])
         let config = ModelConfiguration(schema: schema)
         do {
@@ -34,6 +35,7 @@ enum Store {
 
 @main
 struct ExpenseTrackerApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("faceIDEnabled") private var faceIDEnabled = false
     @State private var isUnlocked = false
 
@@ -46,6 +48,11 @@ struct ExpenseTrackerApp: App {
                 if faceIDEnabled && !isUnlocked {
                     LockScreenView(isUnlocked: $isUnlocked)
                 }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                // Re-lock whenever the app leaves the foreground so returning
+                // requires Face ID / passcode again.
+                if phase == .background { isUnlocked = false }
             }
         }
         .modelContainer(Store.container)
@@ -98,7 +105,8 @@ struct LockScreenView: View {
 
     var body: some View {
         ZStack {
-            Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
+            // Opaque so no financial data shows through the lock screen.
+            Color(.systemBackground).ignoresSafeArea()
             VStack(spacing: 16) {
                 Image(systemName: "lock.shield.fill")
                     .font(.system(size: 56))
