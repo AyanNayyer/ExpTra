@@ -42,6 +42,7 @@ struct LogExpenseIntent: AppIntent {
         }
 
         // 1. Dedupe (same SMS delivered twice / automation double-fire).
+        //    Guard against both saved transactions and pending-review items.
         let hash = Self.sha256(trimmed)
         var dupCheck = FetchDescriptor<Transaction>(
             predicate: #Predicate { $0.messageHash == hash }
@@ -49,6 +50,13 @@ struct LogExpenseIntent: AppIntent {
         dupCheck.fetchLimit = 1
         if let _ = try? context.fetch(dupCheck).first {
             return .result(dialog: "Already logged.")
+        }
+        var pendingDup = FetchDescriptor<PendingMessage>(
+            predicate: #Predicate { $0.messageHash == hash }
+        )
+        pendingDup.fetchLimit = 1
+        if let _ = try? context.fetch(pendingDup).first {
+            return .result(dialog: "Already waiting for review in the app.")
         }
 
         // 2. Load user templates + category rules.
@@ -58,37 +66,50 @@ struct LogExpenseIntent: AppIntent {
         let templates = (try? context.fetch(templateDescriptor)) ?? []
         let rules = (try? context.fetch(FetchDescriptor<CategoryRule>())) ?? []
 
-        // 3. Parse: user templates first, generic fallback second.
-        let parsed = TemplateEngine.parse(trimmed, templates: templates)
-            ?? GenericParser.parse(trimmed)
+        // 3. Classify: templates (incl. ignore) first, resilient generic second.
+        switch MessageParser.classify(trimmed, templates: templates) {
 
-        guard let parsed else {
+        case .ignored:
+            return .result(dialog: "Ignored by your template.")
+
+        case .notTransaction:
             return .result(dialog: "Not recognized as a transaction — skipped.")
+
+        case .ambiguous(let reason, let guess):
+            // Don't drop it — save for the user to confirm in the app.
+            let pending = PendingMessage(
+                rawMessage: trimmed,
+                messageHash: hash,
+                reason: reason,
+                guessedAmount: guess.amount,
+                guessedMerchant: guess.merchant,
+                guessedType: guess.type
+            )
+            context.insert(pending)
+            try context.save()
+            return .result(dialog: "Saved for review — open the app to confirm it.")
+
+        case .transaction(let parsed):
+            let category = Categorizer.category(
+                merchant: parsed.merchant,
+                rawMessage: trimmed,
+                type: parsed.type,
+                userRules: rules
+            )
+            let tx = Transaction(
+                amount: parsed.amount,
+                merchant: parsed.merchant,
+                category: category,
+                account: parsed.account,
+                type: parsed.type,
+                date: .now,
+                rawMessage: trimmed,
+                messageHash: hash
+            )
+            context.insert(tx)
+            try context.save()
+            return .result(dialog: "Logged ₹\(parsed.amount) at \(parsed.merchant) — \(category)")
         }
-
-        // 4. Categorize (user rules win over defaults).
-        let category = Categorizer.category(
-            merchant: parsed.merchant,
-            rawMessage: trimmed,
-            type: parsed.type,
-            userRules: rules
-        )
-
-        // 5. Persist.
-        let tx = Transaction(
-            amount: parsed.amount,
-            merchant: parsed.merchant,
-            category: category,
-            account: parsed.account,
-            type: parsed.type,
-            date: .now,
-            rawMessage: trimmed,
-            messageHash: hash
-        )
-        context.insert(tx)
-        try context.save()
-
-        return .result(dialog: "Logged ₹\(parsed.amount) at \(parsed.merchant) — \(category)")
     }
 
     static func sha256(_ s: String) -> String {

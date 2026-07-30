@@ -58,7 +58,7 @@ final class MessageTemplate {
     var name: String           // "HDFC UPI debit"
     var bank: String           // "HDFC"
     var template: String       // pattern with tokens
-    var type: String           // "debit" | "credit"
+    var type: String           // "debit" | "credit" | "ignore"
     var isEnabled: Bool
     var sortOrder: Int
 
@@ -111,6 +111,40 @@ final class ExpenseCategory {
     }
 }
 
+// MARK: - PendingMessage
+//
+// A message that looked money-related but couldn't be parsed with confidence
+// (direction unclear, both debit & credit wording, etc.). Instead of silently
+// dropping it, we keep it here and prompt the user to confirm or dismiss it
+// in-app. Best-guess values pre-fill the confirmation screen.
+
+@Model
+final class PendingMessage {
+    var rawMessage: String
+    var messageHash: String     // same dedupe key as Transaction
+    var reason: String          // why it needs review
+    var guessedAmount: Decimal  // 0 if unknown
+    var guessedMerchant: String
+    var guessedType: String     // best guess: "debit" | "credit"
+    var createdAt: Date
+
+    init(rawMessage: String,
+         messageHash: String,
+         reason: String,
+         guessedAmount: Decimal = 0,
+         guessedMerchant: String = "",
+         guessedType: String = "debit",
+         createdAt: Date = .now) {
+        self.rawMessage = rawMessage
+        self.messageHash = messageHash
+        self.reason = reason
+        self.guessedAmount = guessedAmount
+        self.guessedMerchant = guessedMerchant
+        self.guessedType = guessedType
+        self.createdAt = createdAt
+    }
+}
+
 // MARK: - Defaults
 
 enum DefaultData {
@@ -147,7 +181,9 @@ enum DefaultData {
         (["rent", "maintenance"], "Rent & Home"),
         (["bookmyshow", "pvr", "inox", "cinepolis"], "Entertainment"),
         (["makemytrip", "goibibo", "oyo", "airbnb", "indigo", "vistara", "air india"], "Travel"),
-        (["salary", "credited"], "Income")
+        // Note: don't key Income on "credited" — it appears in debit SMS too
+        // (e.g. "cashback credited"). Credits already fall back to Income.
+        (["salary"], "Income")
     ]
 
     struct SeedTemplate {
