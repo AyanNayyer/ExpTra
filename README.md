@@ -1,111 +1,202 @@
-# ExpenseTracker — Offline iOS Expense Tracker
+# ExpTra — Private, Offline Expense Tracker for iPhone
 
-Fully on-device expense tracker for iPhone. Auto-captures bank SMS via a
-Shortcuts automation → App Intent pipeline. **No server, no network access,
-no data leaves the phone.**
+**Your bank already texts you every time you spend. ExpTra quietly turns those
+messages into a clean, private expense tracker — automatically, and entirely on
+your device.**
 
-## What's included
+No sign-up. No servers. No ads. No data ever leaves your phone.
+
+---
+
+## Overview
+
+ExpTra reads the transaction SMS your bank sends (via a one-time Shortcuts
+automation) and logs each spend or credit for you — categorized, searchable, and
+charted. It's built for Indian bank/UPI messages but adapts to any format: you
+just paste one real message and the app figures out the pattern itself.
+
+Everything runs locally with Apple's on-device frameworks (SwiftData for
+storage, App Intents for capture, and Apple Intelligence for insights). It works
+with no internet connection, and there's no account to create.
+
+---
+
+## Key features
+
+**Automatic capture**
+- Logs transactions from bank SMS in the background — the app never has to open.
+- Learns *your* bank's message formats from a single pasted example; no manual
+  pattern-writing.
+- Smart, resilient parser: confident messages are logged, promotional/OTP texts
+  are ignored, and anything ambiguous is held for a quick one-tap review instead
+  of being silently dropped.
+
+**Understand your money**
+- Dashboard with a **Spending / Income** toggle that nets refunds and income
+  against spend per category, so you see the real figure.
+- Interactive category **donut chart** — tap a slice to see the amount and share.
+- **6-month spending trend** bar chart.
+- **On-device insights** in plain language ("You've spent ₹9,000 this month, 125%
+  more than last — most went to Shopping"), generated privately with Apple
+  Intelligence when available.
+
+**Stay on budget**
+- Set **monthly budgets** per category or an overall cap.
+- Progress bars and overspend flags — budgets inform, they never block.
+- Optional **trend alerts**: a notification when your monthly spending swings
+  sharply.
+
+**Full control**
+- Fast search and filters (by category, type, or account).
+- **Quick-categorize** from the list with a long-press; **undo** deletes.
+- Auto-categorization with your own rules — "always use this category for this
+  shop" keys on the stable UPI ID so it sticks.
+- Custom categories, editable amounts, manual entries, and CSV export.
+
+**Private & safe**
+- 100% on-device. No network access, no analytics, no tracking.
+- Optional **Face ID / passcode lock** that re-locks every time you leave the app.
+- **Backup & restore** to a JSON file, an automatic daily on-device backup, and
+  optional private **iCloud sync** through your own account.
+
+---
+
+## How it works
+
+```
+Bank SMS  →  Shortcuts automation  →  "Log Expense" App Intent  →  Parser
+          →  Categorizer  →  SwiftData (on device)  →  Dashboard / Budgets
+```
+
+Automations fire on new incoming messages; for history, paste old messages into
+the bulk importer. The parser tries your templates first (top-down, first match
+wins), then falls back to a built-in generic parser, so you're never worse off.
+
+---
+
+## Architecture
 
 | File | Purpose |
 |---|---|
-| `ExpenseTrackerApp.swift` | App entry, SwiftData container, Face ID lock, default seeding |
-| `Models.swift` | `Transaction`, `MessageTemplate`, `CategoryRule` + seed data |
-| `Parser.swift` | Template engine, generic fallback parser, categorizer |
+| `ExpenseTrackerApp.swift` | App entry, SwiftData/CloudKit container, Face ID lock, seeding, notifications |
+| `Models.swift` | `Transaction`, `MessageTemplate`, `CategoryRule`, `ExpenseCategory`, `Budget`, `PendingMessage` + seed data |
+| `Parser.swift` | Template engine, template inference, resilient classifier, categorizer |
+| `Insights.swift` | Trend analytics, on-device NL insight generation, trend notifications |
+| `Backup.swift` | JSON backup/restore + automatic daily backup |
 | `LogExpenseIntent.swift` | The App Intent Shortcuts calls in the background |
-| `Views/DashboardView.swift` | Monthly totals + category donut chart |
-| `Views/TransactionsView.swift` | List, search, edit, manual add, per-merchant rules |
-| `Views/TemplatesView.swift` | Bank message templates editor with live tester |
-| `Views/SettingsView.swift` | Category rules, CSV export, Face ID, setup guide |
+| `Views/DashboardView.swift` | Net spend/income, donut chart, trends, insights |
+| `Views/TransactionsView.swift` | List, search/filter, edit, quick category, undo, review queue, manual add |
+| `Views/BudgetsView.swift` | Per-category / overall monthly budgets |
+| `Views/TemplatesView.swift` | Example-driven bank message templates (incl. ignore rules) |
+| `Views/SettingsView.swift` | Category rules, categories, import, backup, sync, alerts, Face ID |
 | `Views/ImportView.swift` | Paste-in bulk importer for old messages |
 
-## Xcode setup (10 minutes)
+---
+
+## Xcode setup (~10 minutes)
 
 1. **Xcode → File → New → Project → iOS → App.**
-   - Product Name: `ExpenseTracker` (any name works)
-   - Interface: **SwiftUI**, Language: **Swift**
-   - Storage: **None** (we set up SwiftData manually)
-   - Uncheck "Include Tests" if you want minimal setup
-2. In the project settings → General → **Minimum Deployments: iOS 17.0**.
-3. **Delete** the generated `ContentView.swift` and the generated
-   `<YourApp>App.swift`.
-4. Drag all `.swift` files from this folder (including the `Views` folder)
-   into the Xcode project navigator. Check **"Copy items if needed"** and
-   make sure your app target is ticked.
-5. Project → Target → **Info** tab → add key:
-   - `Privacy - Face ID Usage Description` (`NSFaceIDUsageDescription`)
-   - Value: `Used to lock your expense data.`
-6. Signing & Capabilities → select your **Team** (free Apple ID works).
-   - Optional hardening: click **+ Capability → Data Protection** and leave
-     it on *Complete until first user authentication*.
-7. Plug in your iPhone, select it as the run destination, press **Run**.
-   - First run on a free account: on the phone go to
-     Settings → General → VPN & Device Management → trust your developer
-     certificate.
+   - Interface: **SwiftUI**, Language: **Swift**, Storage: **None**.
+2. Project settings → General → **Minimum Deployments: iOS 17.0**.
+   (On-device insights additionally need iOS 26 + Apple Intelligence; everything
+   else works from iOS 17.)
+3. **Delete** the generated `ContentView.swift` and `<YourApp>App.swift`.
+4. Drag all `.swift` files from this folder (including the `Views` folder) into
+   the project navigator — check **"Copy items if needed"** and your app target.
+5. Target → **Info** → add `Privacy - Face ID Usage Description`
+   (`NSFaceIDUsageDescription`) = `Used to lock your expense data.`
+6. Signing & Capabilities → select your **Team** (a free Apple ID works).
+7. Plug in your iPhone, select it as the destination, press **Run**.
+   - On a free account, trust the certificate on the phone via
+     Settings → General → VPN & Device Management.
 
-## One-time Shortcuts automation setup (on the iPhone)
+---
 
-> Also available inside the app: Settings tab → Shortcuts automation guide.
+## One-time Shortcuts automation (on the iPhone)
+
+> Also available in-app: Settings → Shortcuts automation guide.
 
 1. Shortcuts app → **Automation** → **+** → **Message**.
-2. Sender: leave empty. **Message Contains:** `debited`.
-3. Select **Run Immediately**, turn **Notify When Run** off → Next.
+2. Sender: empty. **Message Contains:** `debited`.
+3. **Run Immediately**, **Notify When Run** off → Next.
 4. **New Blank Automation** → add action → search your app name →
    **Log Expense From Message**.
 5. Tap the **Message Text** parameter → choose the magic variable
    **Shortcut Input**.
-6. Done. Repeat steps 1–5 for keywords: `spent`, `credited`, `withdrawn`,
-   `paid`, `sent`. (One automation per keyword.)
+6. Repeat for keywords: `spent`, `credited`, `withdrawn`, `paid`, `sent`
+   (one automation each).
 
-Now send yourself a test message from another phone, e.g.:
+Test it by texting yourself:
 
 ```
 Rs.499.00 debited from A/c XX1234 to SWIGGY on 22-07-26. UPI Ref 123456.
 ```
 
-It should appear in the app within a couple of seconds — without the app
-ever opening.
+It appears in the app within a couple of seconds — without the app opening.
+
+---
 
 ## Customizing for YOUR banks
 
-**Templates tab** — this is the "default template" system you asked for:
+**Templates tab — example-driven, no token typing:**
+1. Copy a real message from your bank.
+2. Tap **+**, paste it into **Example message**.
+3. The app auto-fills **what it will capture** (amount, account, merchant, type).
+   Tweak any field to point it at the right text — the pattern updates itself.
+4. Choose a type: **Debit**, **Credit**, or **Ignore** (to skip messages like
+   pre-notifications, failed txns, or promos). Duplicate templates are flagged.
 
-1. Copy a real debit SMS from your bank.
-2. Open a template (or `+` for new), paste your message into the
-   **pattern** field, and replace the changing parts with tokens:
-   - `{amount}` — the number (keep `Rs.`/`INR` as literal text before it)
-   - `{account}` — account/card digits (`XX1234`)
-   - `{merchant}` — shop / UPI name
-   - `{skip}` — ignore up to 60 characters of noise
-3. Paste the same real message into the **Test** box below — you'll see
-   exactly what gets extracted, live, as you edit.
-4. Only keep the *stable* prefix of the message; you can stop the pattern
-   before reference numbers and balances.
+**Category rules (two ways):**
+- Settings → Category Rules → **Add Rule** (e.g. contains `shop@okaxis` →
+  `Groceries`), optionally re-applied to existing transactions.
+- Or open a transaction → set its category → **"Always use this category…"**.
+  This keys on the UPI ID when present, so the same shop matches reliably.
 
-Templates are tried top-down, first match wins; anything unmatched falls
-back to a built-in generic parser, so you're never worse off.
+Your rules always beat the built-in keyword defaults; the newest rule wins.
 
-**Category rules** (two ways):
-- Settings tab → Category Rules → **Add Rule**: "any merchant/message
-  containing `shop@okaxis` → `Groceries`", with an option to re-apply to
-  existing transactions.
-- Or open any transaction → change its category → toggle
-  **"Always use this category for this merchant"**. Same effect, zero typing.
+**Budgets tab:** set a monthly limit per category or an overall cap. Purely
+informational — nothing is ever blocked.
 
-Your rules always beat the built-in keyword defaults, and the newest rule
-wins on conflicts.
+---
+
+## iCloud sync (optional)
+
+Sync privately across your devices through your own iCloud account. It's
+**off by default**; when off, the app uses local storage and never touches the
+network. To enable:
+
+1. In Xcode: select the target → **Signing & Capabilities → + Capability**.
+2. Add **iCloud** → check **CloudKit** → create/select a container
+   (e.g. `iCloud.<your-bundle-id>`).
+3. Add **Background Modes** capability → check **Remote notifications**
+   (lets changes sync in the background).
+4. Make sure the device is signed into iCloud.
+5. Run the app → **Settings → Sync → iCloud sync** → on → **relaunch** the app.
+
+If the capability isn't set up, the toggle does nothing harmful — the app safely
+falls back to local storage.
+
+---
+
+## Backup & restore
+
+- **Settings → Backup & Restore → Export backup (JSON)** — a complete snapshot
+  (transactions, templates, rules, categories, budgets).
+- **Restore from a backup file** — replaces all current data (with confirmation).
+- The app also writes an **automatic daily backup** on-device you can restore
+  from the same screen.
+
+---
 
 ## Things to know
 
-- **No history backfill from automations** — they only fire on new
-  messages. Use Settings → *Import old messages* to paste and bulk-import
-  past SMS (with duplicate detection and a preview).
-- **Free Apple ID signing expires every 7 days** — re-run from Xcode weekly,
-  or use AltStore/SideStore to auto-refresh, or a paid dev account (1 year).
-- If auto-capture silently stops (e.g. after an iOS update), the Settings
-  tab shows the **last capture time** so you'll notice.
-- Messages that iOS filters into Junk may not trigger automations — avoid
-  aggressive SMS filtering apps for bank senders.
-- Everything is stored in SwiftData on-device. Export CSV anytime from
-  Settings.
-  
-
+- **No history from automations** — they fire only on new messages. Use
+  Settings → *Import old messages* to backfill (with duplicate detection).
+- **Free Apple ID signing expires every 7 days** — re-run from Xcode weekly, or
+  use a paid developer account (1 year).
+- If auto-capture stops (e.g. after an iOS update), Settings shows the **last
+  capture time** so you'll notice.
+- Bank messages filtered into **Junk** may not trigger automations — avoid
+  aggressive SMS-filtering apps for bank senders.
+- **Insights** need Apple Intelligence supported and enabled; otherwise a
+  built-in summary is shown.

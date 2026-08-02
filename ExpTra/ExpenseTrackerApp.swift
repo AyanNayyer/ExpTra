@@ -10,21 +10,47 @@
 import SwiftUI
 import SwiftData
 import LocalAuthentication
+import UserNotifications
+
+// MARK: - Notification delegate (show trend alerts even while app is foreground)
+
+final class AppNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification) async
+    -> UNNotificationPresentationOptions {
+        [.banner, .sound]
+    }
+}
 
 // MARK: - Shared store (used by BOTH the app UI and the App Intent)
 
 enum Store {
+    /// Toggled from Settings. Read here (not via @AppStorage) because the
+    /// container is built once at launch.
+    static let iCloudKey = "iCloudSyncEnabled"
+
+    static let schema = Schema([
+        Transaction.self,
+        MessageTemplate.self,
+        CategoryRule.self,
+        ExpenseCategory.self,
+        PendingMessage.self,
+        Budget.self
+    ])
+
     static let container: ModelContainer = {
-        let schema = Schema([
-            Transaction.self,
-            MessageTemplate.self,
-            CategoryRule.self,
-            ExpenseCategory.self,
-            PendingMessage.self
-        ])
-        let config = ModelConfiguration(schema: schema)
+        // If the user opted into iCloud sync, try a CloudKit-backed store first.
+        // If CloudKit isn't set up (e.g. the iCloud capability hasn't been added
+        // in Xcode), fall back to a local store so the app always launches.
+        if UserDefaults.standard.bool(forKey: iCloudKey) {
+            let cloud = ModelConfiguration(schema: schema, cloudKitDatabase: .automatic)
+            if let container = try? ModelContainer(for: schema, configurations: [cloud]) {
+                return container
+            }
+        }
+        let local = ModelConfiguration(schema: schema)
         do {
-            return try ModelContainer(for: schema, configurations: [config])
+            return try ModelContainer(for: schema, configurations: [local])
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
         }
@@ -35,15 +61,24 @@ enum Store {
 
 @main
 struct ExpenseTrackerApp: App {
+    static let notificationDelegate = AppNotificationDelegate()
+
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("faceIDEnabled") private var faceIDEnabled = false
     @State private var isUnlocked = false
+
+    init() {
+        UNUserNotificationCenter.current().delegate = Self.notificationDelegate
+    }
 
     var body: some Scene {
         WindowGroup {
             ZStack {
                 RootTabView()
-                    .task { seedDefaultsIfNeeded() }
+                    .task {
+                        seedDefaultsIfNeeded()
+                        BackupManager.autoBackupIfNeeded(context: Store.container.mainContext)
+                    }
 
                 if faceIDEnabled && !isUnlocked {
                     LockScreenView(isUnlocked: $isUnlocked)
@@ -53,9 +88,19 @@ struct ExpenseTrackerApp: App {
                 // Re-lock whenever the app leaves the foreground so returning
                 // requires Face ID / passcode again.
                 if phase == .background { isUnlocked = false }
+                if phase == .active { runTrendCheck() }
             }
         }
         .modelContainer(Store.container)
+    }
+
+    /// Check for a significant month-over-month change and, if the user enabled
+    /// alerts, post a local notification (deduped per month inside TrendMonitor).
+    @MainActor
+    private func runTrendCheck() {
+        let context = Store.container.mainContext
+        let txns = (try? context.fetch(FetchDescriptor<Transaction>())) ?? []
+        TrendMonitor.checkAndNotify(transactions: txns)
     }
 
     /// Seeds default bank message templates on first launch only.
@@ -89,6 +134,8 @@ struct RootTabView: View {
                 .tabItem { Label("Dashboard", systemImage: "chart.pie.fill") }
             TransactionsView()
                 .tabItem { Label("Transactions", systemImage: "list.bullet.rectangle") }
+            BudgetsView()
+                .tabItem { Label("Budgets", systemImage: "chart.bar.fill") }
             TemplatesView()
                 .tabItem { Label("Templates", systemImage: "text.badge.checkmark") }
             SettingsView()

@@ -10,24 +10,78 @@
 import SwiftUI
 import SwiftData
 
+/// A lightweight copy of a Transaction so a delete can be undone by re-inserting.
+struct TxSnapshot {
+    let amount: Decimal
+    let merchant, category, account, type: String
+    let date: Date
+    let rawMessage, messageHash: String
+    let isManuallyEdited: Bool
+
+    init(_ t: Transaction) {
+        amount = t.amount; merchant = t.merchant; category = t.category
+        account = t.account; type = t.type; date = t.date
+        rawMessage = t.rawMessage; messageHash = t.messageHash
+        isManuallyEdited = t.isManuallyEdited
+    }
+
+    func makeTransaction() -> Transaction {
+        Transaction(amount: amount, merchant: merchant, category: category,
+                    account: account, type: type, date: date,
+                    rawMessage: rawMessage, messageHash: messageHash,
+                    isManuallyEdited: isManuallyEdited)
+    }
+}
+
+/// Friendly label for an account code.
+func accountLabel(_ account: String) -> String {
+    switch account {
+    case "manual": return "Added manually"
+    case "unknown", "": return "Unset"
+    default: return account
+    }
+}
+
 struct TransactionsView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \Transaction.date, order: .reverse)
     private var transactions: [Transaction]
     @Query(sort: \PendingMessage.createdAt, order: .reverse)
     private var pending: [PendingMessage]
+    @Query private var rules: [CategoryRule]
+    @Query(sort: \ExpenseCategory.name) private var customCategories: [ExpenseCategory]
 
     @State private var searchText = ""
     @State private var showManualAdd = false
+    @State private var filterCategory: String?
+    @State private var filterType: String?
+    @State private var filterAccount: String?
+    @State private var lastDeleted: [TxSnapshot] = []
+    @State private var undoToken = 0
+
+    private var allCategories: [String] {
+        DefaultData.allCategories(custom: customCategories, rules: rules)
+    }
+    private var categoriesInUse: [String] { Set(transactions.map(\.category)).sorted() }
+    private var accountsInUse: [String] { Set(transactions.map(\.account)).sorted() }
+    private var hasActiveFilter: Bool {
+        filterCategory != nil || filterType != nil || filterAccount != nil
+    }
 
     private var filtered: [Transaction] {
-        guard !searchText.isEmpty else { return transactions }
-        let q = searchText.lowercased()
-        return transactions.filter {
-            $0.merchant.lowercased().contains(q) ||
-            $0.category.lowercased().contains(q) ||
-            $0.rawMessage.lowercased().contains(q)
+        var result = transactions
+        if let c = filterCategory { result = result.filter { $0.category == c } }
+        if let t = filterType { result = result.filter { $0.type == t } }
+        if let a = filterAccount { result = result.filter { $0.account == a } }
+        if !searchText.isEmpty {
+            let q = searchText.lowercased()
+            result = result.filter {
+                $0.merchant.lowercased().contains(q) ||
+                $0.category.lowercased().contains(q) ||
+                $0.rawMessage.lowercased().contains(q)
+            }
         }
+        return result
     }
 
     var body: some View {
@@ -49,8 +103,13 @@ struct TransactionsView: View {
                         NavigationLink(value: tx) {
                             TransactionRow(tx: tx)
                         }
+                        .contextMenu { rowMenu(tx) }
                     }
                     .onDelete(perform: delete)
+                } header: {
+                    if hasActiveFilter {
+                        Text("\(filtered.count) shown · filtered")
+                    }
                 }
             }
             .navigationTitle("Transactions")
@@ -60,6 +119,7 @@ struct TransactionsView: View {
             .searchable(text: $searchText,
                         prompt: "Search merchant, category, text")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) { filterMenu }
                 ToolbarItem(placement: .primaryAction) {
                     Button { showManualAdd = true } label: {
                         Image(systemName: "plus")
@@ -69,23 +129,133 @@ struct TransactionsView: View {
             .sheet(isPresented: $showManualAdd) {
                 ManualAddView()
             }
-            .overlay {
-                if transactions.isEmpty && pending.isEmpty {
-                    ContentUnavailableView(
-                        "No transactions yet",
-                        systemImage: "list.bullet.rectangle",
-                        description: Text("They'll appear automatically when bank messages arrive, or add one with +.")
-                    )
+            .overlay { emptyOverlay }
+            .overlay(alignment: .bottom) { undoBanner }
+        }
+    }
+
+    // MARK: subviews
+
+    private var filterMenu: some View {
+        Menu {
+            Picker("Category", selection: $filterCategory) {
+                Text("All Categories").tag(String?.none)
+                ForEach(categoriesInUse, id: \.self) { Text($0).tag(Optional($0)) }
+            }
+            Picker("Type", selection: $filterType) {
+                Text("All Types").tag(String?.none)
+                Text("Debit").tag(Optional("debit"))
+                Text("Credit").tag(Optional("credit"))
+            }
+            Picker("Account", selection: $filterAccount) {
+                Text("All Accounts").tag(String?.none)
+                ForEach(accountsInUse, id: \.self) { acc in
+                    Text(accountLabel(acc)).tag(Optional(acc))
                 }
+            }
+            if hasActiveFilter {
+                Divider()
+                Button(role: .destructive) {
+                    filterCategory = nil; filterType = nil; filterAccount = nil
+                } label: {
+                    Label("Clear Filters", systemImage: "xmark")
+                }
+            }
+        } label: {
+            Image(systemName: hasActiveFilter
+                  ? "line.3.horizontal.decrease.circle.fill"
+                  : "line.3.horizontal.decrease.circle")
+        }
+    }
+
+    @ViewBuilder
+    private func rowMenu(_ tx: Transaction) -> some View {
+        Menu("Set Category") {
+            ForEach(allCategories, id: \.self) { c in
+                Button {
+                    setCategory(c, for: tx)
+                } label: {
+                    if tx.category == c {
+                        Label(c, systemImage: "checkmark")
+                    } else {
+                        Text(c)
+                    }
+                }
+            }
+        }
+        Button(role: .destructive) {
+            snapshotAndDelete([tx])
+        } label: {
+            Label("Delete", systemImage: "trash")
+        }
+    }
+
+    @ViewBuilder
+    private var emptyOverlay: some View {
+        if transactions.isEmpty && pending.isEmpty {
+            ContentUnavailableView(
+                "No transactions yet",
+                systemImage: "list.bullet.rectangle",
+                description: Text("They'll appear automatically when bank messages arrive, or add one with +.")
+            )
+        } else if filtered.isEmpty && pending.isEmpty {
+            ContentUnavailableView(
+                "No matches",
+                systemImage: "line.3.horizontal.decrease.circle",
+                description: Text("No transactions match your search or filters.")
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var undoBanner: some View {
+        if !lastDeleted.isEmpty {
+            HStack {
+                Text("Deleted \(lastDeleted.count) transaction\(lastDeleted.count == 1 ? "" : "s")")
+                    .font(.callout)
+                Spacer()
+                Button("Undo") { undoDelete() }
+                    .fontWeight(.semibold)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(.regularMaterial, in: Capsule())
+            .shadow(radius: 4, y: 2)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .task(id: undoToken) {
+                try? await Task.sleep(for: .seconds(4))
+                withAnimation { lastDeleted = [] }
             }
         }
     }
 
-    private func delete(at offsets: IndexSet) {
-        for index in offsets {
-            context.delete(filtered[index])
-        }
+    // MARK: actions
+
+    private func setCategory(_ category: String, for tx: Transaction) {
+        tx.category = category
+        tx.isManuallyEdited = true
         try? context.save()
+    }
+
+    private func delete(at offsets: IndexSet) {
+        snapshotAndDelete(offsets.map { filtered[$0] })
+    }
+
+    private func snapshotAndDelete(_ txns: [Transaction]) {
+        guard !txns.isEmpty else { return }
+        let snaps = txns.map(TxSnapshot.init)
+        for t in txns { context.delete(t) }
+        try? context.save()
+        withAnimation { lastDeleted = snaps }
+        undoToken += 1
+    }
+
+    private func undoDelete() {
+        for snap in lastDeleted { context.insert(snap.makeTransaction()) }
+        try? context.save()
+        withAnimation { lastDeleted = [] }
     }
 }
 
@@ -124,6 +294,8 @@ struct TransactionEditView: View {
     @State private var createRule = false
     @State private var applyToExisting = true
     @State private var customCategory = ""
+    @State private var amountText = ""
+    @State private var loaded = false
 
     private var allCategories: [String] {
         // Always include the transaction's own category so the Picker can show it,
@@ -133,9 +305,22 @@ struct TransactionEditView: View {
         return set.sorted()
     }
 
+    private var amountIsValid: Bool {
+        if let a = Decimal(string: amountText), a > 0 { return true }
+        return false
+    }
+
+    /// The stable identifier a "always use this category" rule will match on —
+    /// the UPI VPA when present, otherwise the merchant name.
+    private var ruleKey: String {
+        Categorizer.stableMatchKey(merchant: tx.merchant, rawMessage: tx.rawMessage)
+    }
+
     var body: some View {
         Form {
             Section("Details") {
+                TextField("Amount (₹)", text: $amountText)
+                    .keyboardType(.decimalPad)
                 TextField("Merchant", text: $tx.merchant)
                 TextField("Account", text: $tx.account)
                 DatePicker("Date", selection: $tx.date)
@@ -152,7 +337,7 @@ struct TransactionEditView: View {
                 TextField("Or type a new category", text: $customCategory)
                     .autocorrectionDisabled()
 
-                Toggle("Always use this category for \"\(tx.merchant)\"",
+                Toggle("Always use this category for \"\(ruleKey)\"",
                        isOn: $createRule)
                 if createRule {
                     Toggle("Apply to existing transactions", isOn: $applyToExisting)
@@ -169,25 +354,38 @@ struct TransactionEditView: View {
             Button("Save") { save() }
                 .frame(maxWidth: .infinity)
                 .fontWeight(.semibold)
+                .disabled(!amountIsValid)
         }
         .navigationTitle("Edit Transaction")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            guard !loaded else { return }
+            loaded = true
+            amountText = "\(tx.amount)"
+        }
     }
 
     private func save() {
+        if let amount = Decimal(string: amountText), amount > 0 {
+            tx.amount = amount
+        }
         let newCategory = customCategory.trimmingCharacters(in: .whitespaces)
         if !newCategory.isEmpty { tx.category = newCategory }
         tx.isManuallyEdited = true
 
-        if createRule && !tx.merchant.isEmpty {
-            let rule = CategoryRule(matchText: tx.merchant, category: tx.category)
+        let key = ruleKey
+        if createRule && !key.isEmpty {
+            let rule = CategoryRule(matchText: key, category: tx.category)
             context.insert(rule)
 
             if applyToExisting {
-                let needle = tx.merchant.lowercased()
+                let needle = key.lowercased()
                 let all = (try? context.fetch(FetchDescriptor<Transaction>())) ?? []
                 for other in all where other.persistentModelID != tx.persistentModelID {
-                    if other.merchant.lowercased().contains(needle) && !other.isManuallyEdited {
+                    // Match on merchant OR raw message so VPA-based keys catch
+                    // past transactions too (the VPA lives in the raw text).
+                    let hay = (other.merchant + " " + other.rawMessage).lowercased()
+                    if hay.contains(needle) && !other.isManuallyEdited {
                         other.category = tx.category
                     }
                 }

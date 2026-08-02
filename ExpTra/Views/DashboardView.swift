@@ -22,6 +22,7 @@ struct DashboardView: View {
     @State private var monthOffset = 0   // 0 = current month, -1 = last month…
     @State private var selectedAngle: Double?   // raw angular value from a tap on the donut
     @State private var mode: DashboardMode = .spending
+    @State private var insightText = ""
 
     private var calendar: Calendar { .current }
 
@@ -108,10 +109,13 @@ struct DashboardView: View {
                         donutChart
                         categoryList
                     }
+                    trendsSection
+                    insightsSection
                 }
                 .padding()
             }
             .onChange(of: monthOffset) { _, _ in selectedAngle = nil }
+            .task(id: transactions.count) { await refreshInsights() }
             .navigationTitle("Dashboard")
         }
     }
@@ -254,5 +258,55 @@ struct DashboardView: View {
                 : "Credits like salary or refunds will appear here.")
         )
         .padding(.top, 40)
+    }
+
+    // MARK: trends & insights
+
+    @ViewBuilder
+    private var trendsSection: some View {
+        let monthly = InsightEngine.monthlyTotals(transactions: transactions)
+        if monthly.contains(where: { $0.spent > 0 }) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Spending trend").font(.headline)
+                Chart(monthly) { m in
+                    BarMark(
+                        x: .value("Month", m.label),
+                        y: .value("Spent", m.spent)
+                    )
+                    .foregroundStyle(m.id == monthly.last?.id
+                                     ? Color.accentColor
+                                     : Color.secondary.opacity(0.5))
+                    .cornerRadius(4)
+                }
+                .frame(height: 170)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 4)
+        }
+    }
+
+    @ViewBuilder
+    private var insightsSection: some View {
+        if !insightText.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Insight", systemImage: "sparkles")
+                    .font(.headline)
+                Text(insightText)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 14))
+        }
+    }
+
+    private func refreshInsights() async {
+        let data = InsightEngine.compute(transactions: transactions)
+        insightText = data.summary   // instant heuristic
+        insightText = await InsightGenerator.generate(prompt: data.factsPrompt,
+                                                      fallback: data.summary)
+        TrendMonitor.checkAndNotify(transactions: transactions)
     }
 }

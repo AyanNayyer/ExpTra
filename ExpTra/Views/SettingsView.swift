@@ -8,6 +8,7 @@
 
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var context
@@ -16,7 +17,17 @@ struct SettingsView: View {
     @Query private var transactions: [Transaction]
 
     @AppStorage("faceIDEnabled") private var faceIDEnabled = false
+    @AppStorage(InsightEngine.alertsEnabledKey) private var insightAlerts = false
+    @AppStorage(Store.iCloudKey) private var iCloudSync = false
     @State private var showAddRule = false
+
+    // Backup / restore
+    @State private var exporting = false
+    @State private var backupDoc = BackupDocument(data: Data())
+    @State private var importing = false
+    @State private var pendingRestoreData: Data?
+    @State private var showRestoreConfirm = false
+    @State private var restoreMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -72,6 +83,58 @@ struct SettingsView: View {
                     LabeledContent("Transactions", value: "\(transactions.count)")
                 }
 
+                // MARK: Backup
+                Section {
+                    Button {
+                        backupDoc = BackupDocument(data: BackupManager.exportData(context: context))
+                        exporting = true
+                    } label: {
+                        Label("Export backup (JSON)", systemImage: "arrow.down.doc")
+                    }
+                    Button {
+                        importing = true
+                    } label: {
+                        Label("Restore from a backup file", systemImage: "arrow.up.doc")
+                    }
+                    if let last = BackupManager.lastAutoBackupDate {
+                        LabeledContent("Last auto-backup",
+                                       value: last.formatted(date: .abbreviated, time: .shortened))
+                        Button {
+                            if let data = try? Data(contentsOf: BackupManager.autoBackupURL) {
+                                pendingRestoreData = data
+                                showRestoreConfirm = true
+                            }
+                        } label: {
+                            Label("Restore last auto-backup", systemImage: "clock.arrow.circlepath")
+                        }
+                    }
+                } header: {
+                    Text("Backup & Restore")
+                } footer: {
+                    Text("A full backup of everything (transactions, templates, rules, budgets). The app also keeps a daily automatic backup on this device. Restoring replaces all current data.")
+                }
+
+                // MARK: Sync
+                Section {
+                    Toggle("iCloud sync", isOn: $iCloudSync)
+                } header: {
+                    Text("Sync")
+                } footer: {
+                    Text("Syncs privately through your own iCloud account — no third-party servers. Requires the iCloud (CloudKit) capability enabled for this app in Xcode, and a relaunch to take effect. If it isn't set up, the app keeps working with local storage.")
+                }
+
+                // MARK: Notifications
+                Section {
+                    Toggle("Trend alerts", isOn: $insightAlerts)
+                        .onChange(of: insightAlerts) { _, on in
+                            if on { TrendMonitor.requestAuthorization() }
+                        }
+                } header: {
+                    Text("Insights")
+                } footer: {
+                    Text("Get a notification when your monthly spending changes a lot. Insights on the Dashboard use Apple Intelligence on-device when available\(InsightGenerator.onDeviceModelAvailable ? "." : "; otherwise a built-in summary is shown.")")
+                }
+
                 // MARK: Security
                 Section("Security") {
                     Toggle("Require Face ID / passcode", isOn: $faceIDEnabled)
@@ -95,6 +158,39 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .sheet(isPresented: $showAddRule) { AddRuleView() }
+            .fileExporter(isPresented: $exporting, document: backupDoc,
+                          contentType: .json, defaultFilename: "expensetracker-backup") { _ in }
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
+                if case .success(let url) = result {
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    if let data = try? Data(contentsOf: url) {
+                        pendingRestoreData = data
+                        showRestoreConfirm = true
+                    } else {
+                        restoreMessage = "Couldn't read that file."
+                    }
+                }
+            }
+            .alert("Replace all data?", isPresented: $showRestoreConfirm,
+                   presenting: pendingRestoreData) { data in
+                Button("Replace", role: .destructive) {
+                    let ok = BackupManager.restore(from: data, context: context)
+                    restoreMessage = ok ? "Backup restored." : "That file isn't a valid backup."
+                    pendingRestoreData = nil
+                }
+                Button("Cancel", role: .cancel) { pendingRestoreData = nil }
+            } message: { _ in
+                Text("This replaces all current data in the app with the contents of the backup.")
+            }
+            .alert("Backup", isPresented: Binding(
+                get: { restoreMessage != nil },
+                set: { if !$0 { restoreMessage = nil } }
+            )) {
+                Button("OK") { restoreMessage = nil }
+            } message: {
+                Text(restoreMessage ?? "")
+            }
         }
     }
 

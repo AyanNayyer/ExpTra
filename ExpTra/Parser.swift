@@ -449,6 +449,26 @@ enum GenericParser {
 
 enum Categorizer {
 
+    /// The most stable identifier for "this shop", used when creating a
+    /// category rule so future messages from the same place match reliably.
+    /// Prefers the UPI VPA (e.g. "swiggy@ybl") found in the raw message, since
+    /// the human-readable merchant name often varies from message to message;
+    /// falls back to the merchant text.
+    static func stableMatchKey(merchant: String, rawMessage: String) -> String {
+        if let vpa = firstVPA(in: rawMessage) { return vpa }
+        return merchant.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Extract the first UPI VPA (handle@bank) from a message, if present.
+    static func firstVPA(in text: String) -> String? {
+        let pattern = #"[A-Za-z0-9][A-Za-z0-9.\-_]{1,}@[A-Za-z]{2,}"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, range: range),
+              let r = Range(match.range, in: text) else { return nil }
+        return String(text[r])
+    }
+
     /// User rules first (most recent wins), then built-in keyword defaults.
     static func category(merchant: String,
                          rawMessage: String,

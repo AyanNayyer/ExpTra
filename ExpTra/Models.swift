@@ -4,6 +4,10 @@
 //
 //  SwiftData models + default seed data (categories, bank templates).
 //
+//  Every stored property has a default value so the schema is compatible with
+//  optional CloudKit syncing (see Store in ExpenseTrackerApp). Initializers
+//  still set real values, so defaults only matter to the CloudKit schema.
+//
 
 import Foundation
 import SwiftData
@@ -12,15 +16,15 @@ import SwiftData
 
 @Model
 final class Transaction {
-    var amount: Decimal
-    var merchant: String
-    var category: String
-    var account: String        // e.g. "XX1234"
-    var type: String           // "debit" | "credit"
-    var date: Date
-    var rawMessage: String     // original SMS/email text, kept for re-parsing
-    var messageHash: String    // dedupe key
-    var isManuallyEdited: Bool
+    var amount: Decimal = 0
+    var merchant: String = ""
+    var category: String = "Uncategorized"
+    var account: String = "unknown"    // e.g. "XX1234"
+    var type: String = "debit"         // "debit" | "credit"
+    var date: Date = Date.now
+    var rawMessage: String = ""        // original SMS/email text, kept for re-parsing
+    var messageHash: String = ""       // dedupe key
+    var isManuallyEdited: Bool = false
 
     init(amount: Decimal,
          merchant: String,
@@ -55,12 +59,12 @@ final class Transaction {
 
 @Model
 final class MessageTemplate {
-    var name: String           // "HDFC UPI debit"
-    var bank: String           // "HDFC"
-    var template: String       // pattern with tokens
-    var type: String           // "debit" | "credit" | "ignore"
-    var isEnabled: Bool
-    var sortOrder: Int
+    var name: String = ""              // "HDFC UPI debit"
+    var bank: String = ""              // "HDFC"
+    var template: String = ""          // pattern with tokens
+    var type: String = "debit"         // "debit" | "credit" | "ignore"
+    var isEnabled: Bool = true
+    var sortOrder: Int = 0
 
     init(name: String,
          bank: String,
@@ -84,9 +88,9 @@ final class MessageTemplate {
 
 @Model
 final class CategoryRule {
-    var matchText: String      // matched case-insensitively, "contains"
-    var category: String
-    var createdAt: Date
+    var matchText: String = ""         // matched case-insensitively, "contains"
+    var category: String = ""
+    var createdAt: Date = Date.now
 
     init(matchText: String, category: String, createdAt: Date = .now) {
         self.matchText = matchText
@@ -102,13 +106,37 @@ final class CategoryRule {
 
 @Model
 final class ExpenseCategory {
-    var name: String
-    var createdAt: Date
+    var name: String = ""
+    var createdAt: Date = Date.now
 
     init(name: String, createdAt: Date = .now) {
         self.name = name
         self.createdAt = createdAt
     }
+}
+
+// MARK: - Budget
+//
+// A monthly spending limit for one category (or "__overall__" for the whole
+// month). Budgets never block spending — they just surface overspend.
+
+@Model
+final class Budget {
+    var category: String = ""          // a category name, or Budget.overallKey
+    var limit: Decimal = 0
+    var createdAt: Date = Date.now
+
+    init(category: String, limit: Decimal, createdAt: Date = .now) {
+        self.category = category
+        self.limit = limit
+        self.createdAt = createdAt
+    }
+
+    static let overallKey = "__overall__"
+
+    var isOverall: Bool { category == Budget.overallKey }
+    var displayName: String { isOverall ? "Overall (all categories)" : category }
+    var limitDouble: Double { NSDecimalNumber(decimal: limit).doubleValue }
 }
 
 // MARK: - PendingMessage
@@ -120,13 +148,13 @@ final class ExpenseCategory {
 
 @Model
 final class PendingMessage {
-    var rawMessage: String
-    var messageHash: String     // same dedupe key as Transaction
-    var reason: String          // why it needs review
-    var guessedAmount: Decimal  // 0 if unknown
-    var guessedMerchant: String
-    var guessedType: String     // best guess: "debit" | "credit"
-    var createdAt: Date
+    var rawMessage: String = ""
+    var messageHash: String = ""       // same dedupe key as Transaction
+    var reason: String = ""            // why it needs review
+    var guessedAmount: Decimal = 0     // 0 if unknown
+    var guessedMerchant: String = ""
+    var guessedType: String = "debit"  // best guess: "debit" | "credit"
+    var createdAt: Date = Date.now
 
     init(rawMessage: String,
          messageHash: String,

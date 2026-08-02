@@ -104,6 +104,7 @@ struct TemplatesView: View {
 
 struct TemplateEditView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     @Bindable var template: MessageTemplate
 
     @Query(sort: \MessageTemplate.sortOrder) private var allTemplates: [MessageTemplate]
@@ -113,6 +114,9 @@ struct TemplateEditView: View {
     @State private var capturedAccount = ""
     @State private var capturedMerchant = ""
     @State private var generationFailed = false
+    @State private var showDuplicateAlert = false
+    @State private var handledDuplicate = false
+    @State private var deleted = false
 
     private var hasExample: Bool {
         !exampleMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -203,14 +207,35 @@ struct TemplateEditView: View {
         }
         .navigationTitle("Edit Template")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: duplicate?.persistentModelID) { _, newValue in
+            // Warn once when the built pattern first collides with another
+            // template — but let the user keep it if they want.
+            if newValue != nil && !handledDuplicate {
+                showDuplicateAlert = true
+            }
+        }
+        .alert("Template already exists", isPresented: $showDuplicateAlert) {
+            Button("Keep anyway") { handledDuplicate = true }
+            Button("Discard", role: .destructive) { discardDuplicate() }
+        } message: {
+            Text("Another template\(duplicate.map { " (\"\($0.name)\")" } ?? "") already uses this exact pattern. Keep both, or discard this one?")
+        }
         .onDisappear {
             // Discard a template that was never given a pattern (e.g. the user
             // tapped + then backed out) so blanks don't accumulate.
+            guard !deleted else { return }
             if template.template.trimmingCharacters(in: .whitespaces).isEmpty {
                 context.delete(template)
             }
             try? context.save()
         }
+    }
+
+    private func discardDuplicate() {
+        deleted = true
+        context.delete(template)
+        try? context.save()
+        dismiss()
     }
 
     // MARK: sections
