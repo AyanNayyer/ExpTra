@@ -65,9 +65,12 @@ struct LogExpenseIntent: AppIntent {
         )
         let templates = (try? context.fetch(templateDescriptor)) ?? []
         let rules = (try? context.fetch(FetchDescriptor<CategoryRule>())) ?? []
+        let decisions = (try? context.fetch(FetchDescriptor<MessageDecision>())) ?? []
 
-        // 3. Classify: templates (incl. ignore) first, resilient generic second.
-        switch MessageParser.classify(trimmed, templates: templates) {
+        // 3. Classify: templates (incl. ignore) first, resilient generic second,
+        //    then apply the user's learned decisions so shapes they've already
+        //    ruled on don't come back for review.
+        switch MessageParser.classify(trimmed, templates: templates, decisions: decisions) {
 
         case .ignored:
             return .result(dialog: "Ignored by your template.")

@@ -445,6 +445,74 @@ enum GenericParser {
     }
 }
 
+// MARK: - Message signature (shape fingerprint for learned decisions)
+//
+// Reduces a message to a stable "skeleton" by masking the parts that change
+// between otherwise-identical messages — amounts, account/card numbers, UPI
+// VPAs, reference numbers, dates — and dropping punctuation. Two messages from
+// the same bank in the same format collapse to the same (or a very similar)
+// skeleton, which is what lets MessageDecision recognise "this shape again".
+
+enum MessageSignature {
+
+    /// Token-overlap ratio above which two message shapes count as "the same
+    /// kind of message". Tolerant enough to absorb a differing merchant word,
+    /// tight enough not to conflate genuinely different notices.
+    static let matchThreshold = 0.8
+
+    /// Normalize a message to its shape skeleton.
+    static func skeleton(_ raw: String) -> String {
+        var s = raw.replacingOccurrences(of: "\n", with: " ").lowercased()
+        // Order matters: currency amounts before bare numbers.
+        s = replace(s, #"(?:inr|rs\.?|₹)\s*[\d,]+(?:\.\d{1,2})?"#, with: " money ")
+        s = replace(s, #"[a-z0-9][a-z0-9.\-_]+@[a-z]{2,}"#,          with: " vpa ")
+        s = replace(s, #"[x\*]{2,}\d+"#,                            with: " acct ")
+        s = replace(s, #"\d[\d,.:/\-]*"#,                           with: " num ")
+        s = replace(s, #"[^a-z ]+"#,                                with: " ")
+        s = replace(s, #"\s+"#,                                     with: " ")
+        return s.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// The best-matching decision for a message, or nil if none is similar
+    /// enough. Exact skeleton match short-circuits; otherwise token overlap
+    /// (Jaccard) must clear `matchThreshold`.
+    static func bestMatch(for raw: String,
+                          in decisions: [MessageDecision]) -> MessageDecision? {
+        let sk = skeleton(raw)
+        let incoming = tokenize(sk)
+        guard !incoming.isEmpty else { return nil }
+
+        var best: MessageDecision?
+        var bestScore = 0.0
+        for d in decisions where !d.signature.isEmpty {
+            let score = d.signature == sk ? 1.0 : jaccard(incoming, tokenize(d.signature))
+            if score > bestScore { bestScore = score; best = d }
+        }
+        return bestScore >= matchThreshold ? best : nil
+    }
+
+    private static func tokenize(_ skeleton: String) -> Set<String> {
+        Set(skeleton.split(separator: " ").map(String.init).filter { $0.count > 1 })
+    }
+
+    private static func jaccard(_ a: Set<String>, _ b: Set<String>) -> Double {
+        guard !a.isEmpty, !b.isEmpty else { return 0 }
+        let inter = a.intersection(b).count
+        let union = a.union(b).count
+        return union == 0 ? 0 : Double(inter) / Double(union)
+    }
+
+    private static func replace(_ s: String,
+                                _ pattern: String,
+                                with repl: String) -> String {
+        guard let rx = try? NSRegularExpression(pattern: pattern,
+                                                options: [.caseInsensitive])
+        else { return s }
+        let range = NSRange(s.startIndex..., in: s)
+        return rx.stringByReplacingMatches(in: s, range: range, withTemplate: repl)
+    }
+}
+
 // MARK: - Categorizer
 
 enum Categorizer {
@@ -523,6 +591,29 @@ enum MessageParser {
             case .ambiguous(let reason, let g): return .ambiguous(reason: reason, guess: g)
             case .notTransaction:              return .notTransaction
             }
+        }
+    }
+
+    /// Classification that also applies the user's learned decisions. Only
+    /// *ambiguous* results are affected: if the message matches a shape the
+    /// user has already ruled on, we auto-resolve it (add or skip) instead of
+    /// queuing it for review again. Confident matches and ignore-templates are
+    /// left untouched — learning never overrides an explicit rule or a clear
+    /// parse, it only settles the "we weren't sure" cases.
+    static func classify(_ text: String,
+                         templates: [MessageTemplate],
+                         decisions: [MessageDecision]) -> Result {
+        let base = classify(text, templates: templates)
+        guard case .ambiguous(_, let guess) = base,
+              let decision = MessageSignature.bestMatch(for: text, in: decisions)
+        else { return base }
+
+        if decision.isTransaction {
+            return .transaction(ParsedTransaction(
+                amount: guess.amount, merchant: guess.merchant,
+                account: guess.account, type: guess.type, matchedBy: "learned"))
+        } else {
+            return .notTransaction
         }
     }
 }

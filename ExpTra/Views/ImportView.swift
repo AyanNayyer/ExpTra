@@ -17,6 +17,7 @@ struct ImportView: View {
 
     @Query(sort: \MessageTemplate.sortOrder) private var templates: [MessageTemplate]
     @Query private var rules: [CategoryRule]
+    @Query private var decisions: [MessageDecision]
 
     @State private var pastedText = ""
     @State private var previews: [PreviewItem] = []
@@ -151,7 +152,7 @@ struct ImportView: View {
             let hash = LogExpenseIntent.sha256(line)
             let isDup = existingHashes.contains(hash) || pendingHashes.contains(hash)
 
-            switch MessageParser.classify(line, templates: templates) {
+            switch MessageParser.classify(line, templates: templates, decisions: decisions) {
             case .transaction(let p):
                 let category = Categorizer.category(merchant: p.merchant,
                                                     rawMessage: line,

@@ -1,0 +1,29 @@
+# macOS
+.DS_Store
+
+# Xcode — user-specific state (never share these)
+xcuserdata/
+*.xcuserstate
+*.xcuserdatad
+*.xcscmblueprint
+*.xccheckout
+
+# Build output
+build/
+DerivedData/
+*.app
+Products/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Playground
+timeline.xctimeline
+playground.xcworkspace
+
+# Injected/secret config (keep local only)
+*.xcconfig.local

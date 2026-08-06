@@ -504,7 +504,13 @@ struct ReviewView: View {
     }
 
     private func dismissItems(at offsets: IndexSet) {
-        for i in offsets { context.delete(pending[i]) }
+        // Swiping a message away is a "not a transaction" verdict — remember the
+        // shape so it's auto-skipped next time instead of returning for review.
+        for i in offsets {
+            MessageDecision.record(rawMessage: pending[i].rawMessage,
+                                   isTransaction: false, in: context)
+            context.delete(pending[i])
+        }
         try? context.save()
     }
 }
@@ -597,12 +603,18 @@ struct ReviewConfirmView: View {
             isManuallyEdited: true
         )
         context.insert(tx)
+        // Remember this shape so identical/similar messages auto-add next time.
+        MessageDecision.record(rawMessage: pending.rawMessage,
+                               isTransaction: true, in: context)
         context.delete(pending)
         try? context.save()
         dismiss()
     }
 
     private func discard() {
+        // Remember this shape as "not a transaction" so it's auto-skipped next time.
+        MessageDecision.record(rawMessage: pending.rawMessage,
+                               isTransaction: false, in: context)
         context.delete(pending)
         try? context.save()
         dismiss()

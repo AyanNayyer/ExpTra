@@ -35,7 +35,8 @@ enum Store {
         CategoryRule.self,
         ExpenseCategory.self,
         PendingMessage.self,
-        Budget.self
+        Budget.self,
+        MessageDecision.self
     ])
 
     static let container: ModelContainer = {
