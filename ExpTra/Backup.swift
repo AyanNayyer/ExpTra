@@ -33,6 +33,9 @@ struct BackupFile: Codable {
         var rawMessage, messageHash, reason: String
         var guessedAmount: Decimal, guessedMerchant, guessedType: String, createdAt: Date
     }
+    struct DecisionDTO: Codable {
+        var signature: String, isTransaction: Bool, sample: String, createdAt: Date
+    }
 
     var transactions: [TxDTO] = []
     var templates: [TemplateDTO] = []
@@ -40,6 +43,7 @@ struct BackupFile: Codable {
     var categories: [CategoryDTO] = []
     var budgets: [BudgetDTO] = []
     var pending: [PendingDTO] = []
+    var decisions: [DecisionDTO] = []
 }
 
 // MARK: - Manager
@@ -89,6 +93,10 @@ enum BackupManager {
                   guessedAmount: $0.guessedAmount, guessedMerchant: $0.guessedMerchant,
                   guessedType: $0.guessedType, createdAt: $0.createdAt)
         } ?? []
+        file.decisions = (try? context.fetch(FetchDescriptor<MessageDecision>()))?.map {
+            .init(signature: $0.signature, isTransaction: $0.isTransaction,
+                  sample: $0.sample, createdAt: $0.createdAt)
+        } ?? []
         return file
     }
 
@@ -111,6 +119,7 @@ enum BackupManager {
         deleteAll(ExpenseCategory.self, context)
         deleteAll(Budget.self, context)
         deleteAll(PendingMessage.self, context)
+        deleteAll(MessageDecision.self, context)
 
         for t in file.transactions {
             context.insert(Transaction(amount: t.amount, merchant: t.merchant, category: t.category,
@@ -136,6 +145,11 @@ enum BackupManager {
                                           reason: p.reason, guessedAmount: p.guessedAmount,
                                           guessedMerchant: p.guessedMerchant, guessedType: p.guessedType,
                                           createdAt: p.createdAt))
+        }
+        for d in file.decisions {
+            context.insert(MessageDecision(signature: d.signature,
+                                           isTransaction: d.isTransaction,
+                                           sample: d.sample, createdAt: d.createdAt))
         }
         try? context.save()
         return true

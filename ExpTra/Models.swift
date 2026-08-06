@@ -173,6 +173,57 @@ final class PendingMessage {
     }
 }
 
+// MARK: - MessageDecision
+//
+// A remembered verdict about a *shape* of message. When the user confirms a
+// pending message as a transaction (or dismisses it as "not a transaction"),
+// we store the message's normalized signature here. The next time a message
+// with the same shape arrives and would otherwise be ambiguous, we apply the
+// remembered verdict automatically instead of asking again — auto-adding it or
+// silently skipping it. Only genuinely new/unseen shapes stay in review.
+
+@Model
+final class MessageDecision {
+    var signature: String = ""       // normalized skeleton (see MessageSignature)
+    var isTransaction: Bool = true   // true → auto-add, false → auto-skip
+    var sample: String = ""          // an example message, shown when managing rules
+    var createdAt: Date = Date.now
+
+    init(signature: String,
+         isTransaction: Bool,
+         sample: String = "",
+         createdAt: Date = .now) {
+        self.signature = signature
+        self.isTransaction = isTransaction
+        self.sample = sample
+        self.createdAt = createdAt
+    }
+}
+
+extension MessageDecision {
+    /// Remember the user's verdict about a message's shape so similar messages
+    /// are handled automatically from now on. If a decision for the same shape
+    /// already exists it is updated (latest verdict wins) rather than duplicated.
+    @MainActor
+    static func record(rawMessage: String,
+                       isTransaction: Bool,
+                       in context: ModelContext) {
+        let signature = MessageSignature.skeleton(rawMessage)
+        guard !signature.isEmpty else { return }
+
+        let existing = (try? context.fetch(FetchDescriptor<MessageDecision>())) ?? []
+        if let match = existing.first(where: { $0.signature == signature }) {
+            match.isTransaction = isTransaction
+            match.sample = rawMessage
+            match.createdAt = .now
+        } else {
+            context.insert(MessageDecision(signature: signature,
+                                           isTransaction: isTransaction,
+                                           sample: rawMessage))
+        }
+    }
+}
+
 // MARK: - Defaults
 
 enum DefaultData {

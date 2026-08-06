@@ -67,6 +67,17 @@ struct SettingsView: View {
                     }
                 }
 
+                // MARK: Learned message rules
+                Section {
+                    NavigationLink {
+                        LearnedRulesView()
+                    } label: {
+                        Label("Learned message rules", systemImage: "wand.and.stars")
+                    }
+                } footer: {
+                    Text("When you confirm or dismiss a message in review, the app remembers that kind of message and handles similar ones automatically. Remove a rule here if it's guessing wrong.")
+                }
+
                 // MARK: Data
                 Section("Data") {
                     NavigationLink {
@@ -361,6 +372,56 @@ struct CategoryManagerView: View {
 
     private func deleteCustom(at offsets: IndexSet) {
         for i in offsets { context.delete(customCategories[i]) }
+        try? context.save()
+    }
+}
+
+// MARK: - Learned message rules manager
+
+struct LearnedRulesView: View {
+    @Environment(\.modelContext) private var context
+    @Query(sort: \MessageDecision.createdAt, order: .reverse)
+    private var decisions: [MessageDecision]
+
+    var body: some View {
+        List {
+            if decisions.isEmpty {
+                Section {
+                    Text("No learned rules yet.")
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                }
+            } else {
+                Section {
+                    ForEach(decisions) { d in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label(d.isTransaction ? "Auto-add" : "Auto-skip",
+                                  systemImage: d.isTransaction
+                                    ? "checkmark.circle.fill" : "nosign")
+                                .font(.caption.bold())
+                                .foregroundStyle(d.isTransaction ? .green : .secondary)
+                            Text(d.sample.isEmpty ? d.signature : d.sample)
+                                .font(.callout)
+                                .lineLimit(2)
+                        }
+                    }
+                    .onDelete(perform: delete)
+                } footer: {
+                    Text("Swipe to remove. New messages of that kind will be sent back to review instead.")
+                }
+            }
+        }
+        .navigationTitle("Learned Rules")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !decisions.isEmpty {
+                ToolbarItem(placement: .primaryAction) { EditButton() }
+            }
+        }
+    }
+
+    private func delete(at offsets: IndexSet) {
+        for i in offsets { context.delete(decisions[i]) }
         try? context.save()
     }
 }
