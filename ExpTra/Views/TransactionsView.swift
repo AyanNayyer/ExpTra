@@ -44,6 +44,7 @@ func accountLabel(_ account: String) -> String {
 
 struct TransactionsView: View {
     @Environment(\.modelContext) private var context
+    @Environment(AppRouter.self) private var router
     @Query(sort: \Transaction.date, order: .reverse)
     private var transactions: [Transaction]
     @Query(sort: \PendingMessage.createdAt, order: .reverse)
@@ -56,6 +57,8 @@ struct TransactionsView: View {
     @State private var filterCategory: String?
     @State private var filterType: String?
     @State private var filterAccount: String?
+    @State private var scopedMonth: Date?   // month carried over when opened from the Dashboard
+    @State private var showAllTime = false  // toggle: view the scoped month vs. all time
     @State private var lastDeleted: [TxSnapshot] = []
     @State private var undoToken = 0
 
@@ -64,8 +67,32 @@ struct TransactionsView: View {
     }
     private var categoriesInUse: [String] { Set(transactions.map(\.category)).sorted() }
     private var accountsInUse: [String] { Set(transactions.map(\.account)).sorted() }
+
+    /// Header label for the active filter — names the month when scoped to one,
+    /// otherwise a generic count.
+    private var filterHeaderText: String {
+        if let m = effectiveMonth {
+            return "\(filtered.count) shown · \(m.formatted(.dateTime.month(.wide).year()))"
+        }
+        return "\(filtered.count) shown · filtered"
+    }
+
+    /// Debits in the current filtered view — "total spent" for the active
+    /// category over whichever scope (month or all time) is selected.
+    private var totalSpentInScope: Double {
+        filtered.filter { $0.type == "debit" }.reduce(0) { $0 + $1.amountDouble }
+    }
     private var hasActiveFilter: Bool {
         filterCategory != nil || filterType != nil || filterAccount != nil
+            || effectiveMonth != nil
+    }
+
+    private var calendar: Calendar { .current }
+
+    /// The month actually applied to the list: the scoped month, unless the user
+    /// switched to All time (or there's no scoped month to begin with).
+    private var effectiveMonth: Date? {
+        showAllTime ? nil : scopedMonth
     }
 
     private var filtered: [Transaction] {
@@ -73,12 +100,19 @@ struct TransactionsView: View {
         if let c = filterCategory { result = result.filter { $0.category == c } }
         if let t = filterType { result = result.filter { $0.type == t } }
         if let a = filterAccount { result = result.filter { $0.account == a } }
+        if let m = effectiveMonth {
+            result = result.filter { calendar.isDate($0.date, equalTo: m, toGranularity: .month) }
+        }
         if !searchText.isEmpty {
             let q = searchText.lowercased()
+            // Digits (and a decimal point) the user typed, for matching amounts —
+            // strips any "₹", commas or spaces so "₹1,234" and "1234" both work.
+            let amountQuery = q.filter { $0.isNumber || $0 == "." }
             result = result.filter {
                 $0.merchant.lowercased().contains(q) ||
                 $0.category.lowercased().contains(q) ||
-                $0.rawMessage.lowercased().contains(q)
+                $0.rawMessage.lowercased().contains(q) ||
+                (!amountQuery.isEmpty && "\($0.amount)".contains(amountQuery))
             }
         }
         return result
@@ -98,6 +132,7 @@ struct TransactionsView: View {
                         }
                     }
                 }
+                if filterCategory != nil { categorySummary }
                 Section {
                     ForEach(filtered) { tx in
                         NavigationLink(value: tx) {
@@ -108,7 +143,7 @@ struct TransactionsView: View {
                     .onDelete(perform: delete)
                 } header: {
                     if hasActiveFilter {
-                        Text("\(filtered.count) shown · filtered")
+                        Text(filterHeaderText)
                     }
                 }
             }
@@ -117,7 +152,7 @@ struct TransactionsView: View {
                 TransactionEditView(tx: tx)
             }
             .searchable(text: $searchText,
-                        prompt: "Search merchant, category, text")
+                        prompt: "Search merchant, category, amount, text")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { filterMenu }
                 ToolbarItem(placement: .primaryAction) {
@@ -131,10 +166,51 @@ struct TransactionsView: View {
             }
             .overlay { emptyOverlay }
             .overlay(alignment: .bottom) { undoBanner }
+            .onChange(of: router.pendingCategoryFilter) { _, newValue in
+                applyPendingCategoryFilter(newValue)
+            }
+            .onAppear { applyPendingCategoryFilter(router.pendingCategoryFilter) }
         }
     }
 
+    /// Applies a category handed over from another tab (e.g. the Dashboard),
+    /// clearing any other search/filters so only that category shows, then
+    /// clears the request so it isn't re-applied on the next appearance.
+    private func applyPendingCategoryFilter(_ category: String?) {
+        guard let category else { return }
+        filterCategory = category
+        scopedMonth = router.pendingMonth
+        showAllTime = false
+        filterType = nil
+        filterAccount = nil
+        searchText = ""
+        router.pendingCategoryFilter = nil
+        router.pendingMonth = nil
+    }
+
     // MARK: subviews
+
+    /// Scope switch (month vs. all time) + total spent for the filtered category.
+    @ViewBuilder
+    private var categorySummary: some View {
+        Section {
+            if let month = scopedMonth {
+                Picker("Scope", selection: $showAllTime) {
+                    Text(month.formatted(.dateTime.month(.abbreviated).year())).tag(false)
+                    Text("All time").tag(true)
+                }
+                .pickerStyle(.segmented)
+            }
+            HStack {
+                Text("Total spent")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(totalSpentInScope,
+                     format: .currency(code: "INR").precision(.fractionLength(0)))
+                    .fontWeight(.semibold)
+            }
+        }
+    }
 
     private var filterMenu: some View {
         Menu {
@@ -157,6 +233,7 @@ struct TransactionsView: View {
                 Divider()
                 Button(role: .destructive) {
                     filterCategory = nil; filterType = nil; filterAccount = nil
+                    scopedMonth = nil; showAllTime = false
                 } label: {
                     Label("Clear Filters", systemImage: "xmark")
                 }

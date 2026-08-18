@@ -126,22 +126,49 @@ struct ExpenseTrackerApp: App {
     }
 }
 
+// MARK: - Cross-tab navigation
+
+enum AppTab: Hashable {
+    case dashboard, transactions, budgets, templates, settings
+}
+
+/// Shared navigation state so one tab can drive another — e.g. tapping a
+/// category on the Dashboard switches to Transactions with that filter applied.
+@Observable
+final class AppRouter {
+    var selectedTab: AppTab = .dashboard
+    /// Set by the Dashboard when a category is tapped; consumed (and cleared)
+    /// by TransactionsView, which applies it as its category filter.
+    var pendingCategoryFilter: String?
+    /// The month the Dashboard was showing when the category was tapped, so the
+    /// Transactions list scopes to that same month rather than all-time.
+    var pendingMonth: Date?
+}
+
 // MARK: - Root tabs
 
 struct RootTabView: View {
+    @State private var router = AppRouter()
+
     var body: some View {
-        TabView {
+        TabView(selection: $router.selectedTab) {
             DashboardView()
                 .tabItem { Label("Dashboard", systemImage: "chart.pie.fill") }
+                .tag(AppTab.dashboard)
             TransactionsView()
                 .tabItem { Label("Transactions", systemImage: "list.bullet.rectangle") }
+                .tag(AppTab.transactions)
             BudgetsView()
                 .tabItem { Label("Budgets", systemImage: "chart.bar.fill") }
+                .tag(AppTab.budgets)
             TemplatesView()
                 .tabItem { Label("Templates", systemImage: "text.badge.checkmark") }
+                .tag(AppTab.templates)
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
+                .tag(AppTab.settings)
         }
+        .environment(router)
     }
 }
 

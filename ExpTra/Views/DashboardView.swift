@@ -16,6 +16,7 @@ enum DashboardMode: String, CaseIterable, Identifiable {
 }
 
 struct DashboardView: View {
+    @Environment(AppRouter.self) private var router
     @Query(sort: \Transaction.date, order: .reverse)
     private var transactions: [Transaction]
 
@@ -190,8 +191,20 @@ struct DashboardView: View {
             .opacity(selectedCategory == nil || selectedCategory?.id == item.id ? 1 : 0.35)
         }
         .chartAngleSelection(value: $selectedAngle)
-        .chartBackground { _ in donutCenter }
-        .frame(height: 240)
+        .chartBackground { proxy in
+            // Pin the readout to the pie's exact geometric center rather than
+            // relying on default background alignment, which drifts in a
+            // non-square plot rect and leaves the label sitting high.
+            GeometryReader { geo in
+                if let plotFrame = proxy.plotFrame {
+                    let rect = geo[plotFrame]
+                    donutCenter
+                        .position(x: rect.midX, y: rect.midY)
+                }
+            }
+        }
+        .chartPlotStyle { $0.frame(width: 220, height: 220) }
+        .frame(maxWidth: .infinity)
         .chartLegend(position: .bottom, alignment: .center, spacing: 8)
         .animation(.easeInOut(duration: 0.25), value: selectedCategory?.id)
     }
@@ -235,14 +248,29 @@ struct DashboardView: View {
     private var categoryList: some View {
         VStack(spacing: 0) {
             ForEach(categoryTotals) { item in
-                HStack {
-                    Text(item.category)
-                    Spacer()
-                    Text(item.total,
-                         format: .currency(code: "INR").precision(.fractionLength(0)))
-                        .fontWeight(.medium)
+                Button {
+                    // Hand the category + the month on screen to the Transactions
+                    // tab and switch to it.
+                    router.pendingCategoryFilter = item.category
+                    router.pendingMonth = displayedMonth
+                    router.selectedTab = .transactions
+                } label: {
+                    HStack {
+                        Text(item.category)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Text(item.total,
+                             format: .currency(code: "INR").precision(.fractionLength(0)))
+                            .fontWeight(.medium)
+                            .foregroundStyle(.primary)
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                    .padding(.vertical, 10)
                 }
-                .padding(.vertical, 10)
+                .buttonStyle(.plain)
                 Divider()
             }
         }
